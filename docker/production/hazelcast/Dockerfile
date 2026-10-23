@@ -1,0 +1,1 @@
+FROM hazelcast/hazelcast:5.5

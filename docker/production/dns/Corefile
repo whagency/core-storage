@@ -1,0 +1,19 @@
+.:53 {
+    log
+    errors
+    cache 1000
+
+    hosts {
+        172.28.0.10 db.local
+        172.28.0.11 rabbitmq.local
+        172.28.0.12 hazelcast.local
+        172.28.0.13 mongo.local
+        172.28.0.14 jaeger.local
+        172.28.0.17 kibana.local
+        172.28.0.19 grafana.local
+        172.28.0.30 admin-panel.vpn.local
+        fallthrough
+    }
+
+    forward . 8.8.8.8 1.1.1.1 9.9.9.9
+}

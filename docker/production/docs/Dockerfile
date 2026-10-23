@@ -1,0 +1,1 @@
+FROM swaggerapi/swagger-ui:v5.32.5

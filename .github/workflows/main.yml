@@ -1,0 +1,195 @@
+name: Deploy storage service
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build images
+        run: |
+          docker build -t fin-openvpn:latest -f ./docker/production/openvpn/Dockerfile .
+          docker build -t fin-dns:latest -f ./docker/production/dns/Dockerfile .
+          docker build -t fin-postgres:latest -f ./docker/production/db/Dockerfile .
+          docker build -t fin-rabbitmq:latest -f ./docker/production/rabbitmq/Dockerfile .
+          docker build -t fin-hazelcast:latest -f ./docker/production/hazelcast/Dockerfile .
+          docker build -t fin-mongo:latest -f ./docker/production/mongo/Dockerfile .
+          docker build -t fin-docs:latest -f ./docker/production/docs/Dockerfile .
+
+          docker save fin-openvpn:latest -o ./fin-openvpn.tar
+          docker save fin-dns:latest -o ./fin-dns.tar
+          docker save fin-postgres:latest -o ./fin-postgres.tar
+          docker save fin-rabbitmq:latest -o ./fin-rabbitmq.tar
+          docker save fin-hazelcast:latest -o ./fin-hazelcast.tar
+          docker save fin-mongo:latest -o ./fin-mongo.tar
+          docker save fin-docs:latest -o ./fin-docs.tar
+
+          chmod 644 ./fin-*.tar
+
+      - name: Copy image to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ vars.SERVER_HOST }}
+          username: ${{ vars.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_PRIVATE_KEY }}
+          source: "fin-*.tar"
+          target: "/var/www/deploy/"
+
+      - name: Deploy on server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ vars.SERVER_HOST }}
+          username: ${{ vars.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_PRIVATE_KEY }}
+          script: |
+            docker network create \
+              --driver bridge \
+              --subnet=172.28.0.0/16 \
+              --ip-range=172.28.0.128/25 \
+              fin_network || true
+            
+            # OpenVPN
+            docker load -i /var/www/deploy/fin-openvpn.tar
+            docker stop fin_openvpn || true
+            docker rm fin_openvpn || true
+            docker run -d \
+              --name fin_openvpn \
+              --restart always \
+              --device /dev/net/tun:/dev/net/tun \
+              --cap-add=NET_ADMIN \
+              --cap-add=MKNOD \
+              -v fin_openvpn_data_prod:/openvpn \
+              -p "127.0.0.1:943:943" \
+              -p "127.0.0.1:9443:443" \
+              -p "1194:1194/udp" \
+              --network fin_network \
+              --ip 172.28.0.2 \
+              --log-driver json-file \
+              --log-opt max-size=10m \
+              --log-opt max-file=3 \
+              fin-openvpn:latest
+            rm /var/www/deploy/fin-openvpn.tar
+
+            # DNS
+            docker load -i /var/www/deploy/fin-dns.tar
+            docker stop fin_dns || true
+            docker rm fin_dns || true
+            docker run -d \
+              --name fin_dns \
+              --restart always \
+              --network fin_network \
+              --ip 172.28.0.3 \
+              --log-driver json-file \
+              --log-opt max-size=10m \
+              --log-opt max-file=3 \
+              fin-dns:latest
+            rm /var/www/deploy/fin-dns.tar
+
+            # PostgreSQL
+            docker load -i /var/www/deploy/fin-postgres.tar
+            docker stop fin_postgres || true
+            docker rm fin_postgres || true
+            docker run -d \
+              --name fin_postgres \
+              --restart always \
+              -e "POSTGRES_DB=postgres" \
+              -e "POSTGRES_USER=${{ vars.POSTGRES_USER }}" \
+              -e "POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}" \
+              -e "POSTGRES_MULTIPLE_DATABASES=${{ vars.POSTGRES_MULTIPLE_DATABASES }}" \
+              -v fin_postgres_data_prod:/var/lib/postgresql/data \
+              --network fin_network \
+              --ip 172.28.0.10 \
+              --log-driver json-file \
+              --log-opt max-size=10m \
+              --log-opt max-file=3 \
+              fin-postgres:latest
+            rm /var/www/deploy/fin-postgres.tar
+
+            # RabbitMQ
+            docker load -i /var/www/deploy/fin-rabbitmq.tar
+            docker stop fin_rabbitmq || true
+            docker rm fin_rabbitmq || true
+            docker run -d \
+              --name fin_rabbitmq \
+              --restart always \
+              -e "RABBITMQ_DEFAULT_USER=${{ vars.RABBITMQ_DEFAULT_USER }}" \
+              -e "RABBITMQ_DEFAULT_PASS=${{ secrets.RABBITMQ_DEFAULT_PASS }}" \
+              --network fin_network \
+              --ip 172.28.0.11 \
+              --log-driver json-file \
+              --log-opt max-size=10m \
+              --log-opt max-file=3 \
+              fin-rabbitmq:latest
+            rm /var/www/deploy/fin-rabbitmq.tar
+
+            # Hazelcast
+            docker load -i /var/www/deploy/fin-hazelcast.tar
+            docker stop fin_hazelcast || true
+            docker rm fin_hazelcast || true
+            docker run -d \
+              --name fin_hazelcast \
+              --restart always \
+              -e "HZ_CLUSTERNAME=${{ vars.HZ_CLUSTERNAME }}" \
+              -e "HZ_NETWORK_JOIN_MULTICAST_ENABLED=${{ vars.HZ_NETWORK_JOIN_MULTICAST_ENABLED }}" \
+              -e "HZ_NETWORK_JOIN_TCPIP_ENABLED=${{ vars.HZ_NETWORK_JOIN_TCPIP_ENABLED }}" \
+              --network fin_network \
+              --ip 172.28.0.12 \
+              --log-driver json-file \
+              --log-opt max-size=10m \
+              --log-opt max-file=3 \
+              fin-hazelcast:latest  
+            rm /var/www/deploy/fin-hazelcast.tar
+            
+            # MongoDB
+            docker load -i /var/www/deploy/fin-mongo.tar
+            docker stop fin_mongo || true
+            docker rm fin_mongo || true
+            docker run -d \
+              --name fin_mongo \
+              --restart always \
+              -e "MONGO_INITDB_ROOT_USERNAME=${{ vars.MONGO_INITDB_ROOT_USERNAME }}" \
+              -e "MONGO_INITDB_ROOT_PASSWORD=${{ secrets.MONGO_INITDB_ROOT_PASSWORD }}" \
+              -v fin_mongo_data_prod:/data/db \
+              --network fin_network \
+              --ip 172.28.0.13 \
+              --log-driver json-file \
+              --log-opt max-size=10m \
+              --log-opt max-file=3 \
+              fin-mongo:latest  
+            rm /var/www/deploy/fin-mongo.tar
+
+            # Swagger API docs
+            docker load -i /var/www/deploy/fin-docs.tar
+            docker stop fin_docs || true
+            docker rm fin_docs || true
+            docker run -d \
+              --name fin_docs \
+              --restart always \
+              -p "127.0.0.1:8200:8080" \
+              -e "DEFAULT_MODELS_EXPAND_DEPTH=-1" \
+              -e "VALIDATOR_URL=null" \
+              -e "DOC_EXPANSION=list" \
+              -e "SUPPORTED_SUBMIT_METHODS=[]" \
+              -e "URLS_PRIMARY_NAME=User Service" \
+              -e "URLS=[
+                {url: 'docs/user.json', name: 'User Service'},
+                {url: 'docs/currency.json', name: 'Currency Service'},
+                {url: 'docs/merchant.json', name: 'Merchant Service'},
+                {url: 'docs/pay.json', name: 'Pay Service'},
+                {url: 'docs/restriction.json', name: 'Restriction Service'},
+                {url: 'docs/account.json', name: 'Account Service'}
+              ]" \
+              -v fin_docs_data_prod:/usr/share/nginx/html/docs:ro \
+              --network fin_network \
+              --log-driver json-file \
+              --log-opt max-size=10m \
+              --log-opt max-file=3 \
+              fin-docs:latest
+            rm /var/www/deploy/fin-docs.tar

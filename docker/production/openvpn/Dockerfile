@@ -1,0 +1,1 @@
+FROM openvpn/openvpn-as:3.0.2-87c70987-Ubuntu24

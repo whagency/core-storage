@@ -1,0 +1,68 @@
+services:
+
+  rabbitmq:
+    build:
+      context: ./docker/production/rabbitmq
+    image: fin-rabbitmq:local
+    container_name: fin_rabbitmq
+    restart: on-failure
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS}
+    ports:
+      - "${RABBITMQ_AMQP_PORT}:5672"
+      - "${RABBITMQ_MANAGEMENT_PORT}:15672"
+    volumes:
+      - fin_rabbitmq_data:/var/lib/rabbitmq
+
+  hazelcast:
+    image: hazelcast/hazelcast:5.5
+    container_name: fin_hazelcast
+    restart: on-failure
+    ports:
+      - "${HAZELCAST_PORT}:5701"
+    environment:
+      HZ_CLUSTERNAME: ${HZ_CLUSTERNAME}
+      HZ_NETWORK_JOIN_MULTICAST_ENABLED: ${HZ_NETWORK_JOIN_MULTICAST_ENABLED}
+      HZ_NETWORK_JOIN_TCPIP_ENABLED: ${HZ_NETWORK_JOIN_TCPIP_ENABLED}
+    volumes:
+      - fin_hazelcast_data:/data
+
+  postgres:
+    image: postgres:17
+    container_name: fin_postgres
+    restart: on-failure
+    environment:
+      POSTGRES_MULTIPLE_DATABASES: ${POSTGRES_MULTIPLE_DATABASES}
+      POSTGRES_DB: postgres
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    command:
+      - "postgres"
+      - "-c"
+      - "max_connections=2000"
+      - "-c"
+      - "shared_buffers=1GB"
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    volumes:
+      - ./docker/production/db/multiple-databases.sh:/docker-entrypoint-initdb.d/multiple-databases.sh
+      - fin_postgres_data:/var/lib/postgresql/data
+
+  mongo:
+    image: mongo:7.0.25
+    container_name: fin_mongo
+    restart: on-failure
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+    ports:
+      - "${MONGO_PORT}:27017"
+    volumes:
+      - fin_mongo_data:/data/db
+
+volumes:
+  fin_rabbitmq_data:
+  fin_hazelcast_data:
+  fin_postgres_data:
+  fin_mongo_data:

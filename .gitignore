@@ -1,0 +1,8 @@
+# Environment files
+.DS_Store
+.idea
+.env
+
+# Local AI assistant instructions
+/AGENTS.md
+/CLAUDE.md
